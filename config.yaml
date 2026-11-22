@@ -1,0 +1,17 @@
+samples: "c0_fixture/samples.tsv"
+
+deseq2:
+  design: "~ donor + sampletype"
+  group_column: "sampletype"  # 样本表中定义比较分组的列名
+  alpha: 0.05
+  min_fold_change: 1.5
+  contrasts:
+    LPS_vs_Control:
+      numerator: "LPS"
+      denominator: "Control"  # 比较的参考组
+
+enrichment:
+  pathway_fdr: 0.05
+  # 当前示例的 SIM 基因只与这张本地基因集表对应。
+  # 切换到真实人或小鼠 Ensembl 数据时，设为 null，启用 GO BP、KEGG 和 Hallmark。
+  term2gene: "c0_fixture/term2gene.tsv"

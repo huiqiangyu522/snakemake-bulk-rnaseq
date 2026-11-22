@@ -1,0 +1,17 @@
+# Snakemake 缓存和中间文件
+/.snakemake/
+/work/
+
+# 生成结果中只保留 README 引用的示例报告
+/results/*
+!/results/report.html
+
+# 本地实验数据；随仓库发布的模拟数据在 c0_fixture/ 下
+/data/
+
+# RStudio、R 和 macOS 的本地文件
+.Rproj.user/
+.Rhistory
+.RData
+.DS_Store
+*.textClipping

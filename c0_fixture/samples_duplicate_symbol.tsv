@@ -1,0 +1,7 @@
+sample_id	sampletype	donor	count_file
+Control_1	Control	D1	c0_fixture/raw/duplicate_symbol/Control_1.counts.tsv.gz
+LPS_1	LPS	D1	c0_fixture/raw/duplicate_symbol/LPS_1.counts.tsv.gz
+Control_2	Control	D2	c0_fixture/raw/duplicate_symbol/Control_2.counts.tsv.gz
+LPS_2	LPS	D2	c0_fixture/raw/duplicate_symbol/LPS_2.counts.tsv.gz
+Control_3	Control	D3	c0_fixture/raw/duplicate_symbol/Control_3.counts.tsv.gz
+LPS_3	LPS	D3	c0_fixture/raw/duplicate_symbol/LPS_3.counts.tsv.gz

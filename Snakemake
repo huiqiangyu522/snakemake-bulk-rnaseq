@@ -1,0 +1,159 @@
+import csv
+import math
+import re
+
+configfile: "config.yaml"
+
+DE = config["deseq2"]
+CONTRASTS = DE["contrasts"]
+ENRICH = config["enrichment"]
+TERM2GENE = ENRICH.get("term2gene")
+if not CONTRASTS:
+    raise ValueError("deseq2.contrasts 至少需要一项比较。")
+for name, contrast in CONTRASTS.items():
+    if not re.fullmatch(r"[\w.-]+", name) or name in {".", ".."}:
+        raise ValueError(f"比较名称不能用作文件名：{name}")
+    if not contrast.get("numerator") or not contrast.get("denominator") or contrast["numerator"] == contrast["denominator"]:
+        raise ValueError(f"{name} 需要两个不同的组名。")
+for value, key in [(DE["alpha"], "deseq2.alpha"), (ENRICH["pathway_fdr"], "enrichment.pathway_fdr")]:
+    if not 0 < value < 1:
+        raise ValueError(f"{key} 必须在 0 与 1 之间。")
+if not math.isfinite(DE["min_fold_change"]) or DE["min_fold_change"] < 1:
+    raise ValueError("deseq2.min_fold_change 必须是大于或等于 1 的有限数值。")
+
+# 本地基因集和公共数据库使用独立的文件名，便于辨认报告来源。
+ORA_SETS = ["custom"] if TERM2GENE else ["go_bp", "kegg"]
+GSEA_SET = "custom" if TERM2GENE else "hallmark"
+ORA_KEYS = [f"{source}_{direction}" for source in ORA_SETS for direction in ("up", "down")]
+ET = "results/tables/enrichment/{comparison}/"
+EF = "results/figures/enrichment/{comparison}/"
+ENRICH_OUTPUT = {key + "_table": ET + key + ".tsv" for key in ORA_KEYS}
+ENRICH_OUTPUT.update({key + "_plot": EF + key + ".png" for key in ORA_KEYS})
+ENRICH_OUTPUT["gsea_table"] = ET + GSEA_SET + "_gsea.tsv"
+ENRICH_OUTPUT["gsea_plot"] = EF + GSEA_SET + "_nes.png"
+
+
+rule all:
+    input:
+        "results/report.html"
+    default_target: True
+
+
+def get_count_files(wildcards):
+    with open(config["samples"], encoding="utf-8-sig", newline="") as handle:
+        rows = csv.DictReader(handle, delimiter="\t")
+        if "count_file" not in (rows.fieldnames or []):
+            raise ValueError("样本表缺少 count_file 列。")
+        paths = [row["count_file"] for row in rows]
+        if not all(path and path.strip() for path in paths):
+            raise ValueError("样本表的 count_file 列有空值。")
+        return paths
+
+
+rule validate_inputs:
+    input:
+        samples=config["samples"],
+        counts=get_count_files
+    output:
+        counts="work/validated/counts.tsv",
+        samples="work/validated/samples.tsv"
+    params:
+        design=DE["design"]
+    script:
+        "script/validate_inputs.R"
+
+
+rule prepare_dds:
+    input:
+        counts=rules.validate_inputs.output.counts,
+        samples=rules.validate_inputs.output.samples
+    output:
+        dds="work/deseq2/dds_base.rds"
+    params:
+        design=DE["design"],
+        group_column=DE["group_column"]
+    script:
+        "script/prepare_dds.R"
+
+
+rule sample_qc:
+    input:
+        dds=rules.prepare_dds.output.dds
+    output:
+        pca="results/figures/sample_qc/pca.png",
+        correlation_heatmap="results/figures/sample_qc/correlation_heatmap.png"
+    params:
+        group_column=DE["group_column"]
+    script:
+        "script/sample_qc.R"
+
+
+rule deseq2:
+    input:
+        dds=rules.prepare_dds.output.dds
+    output:
+        results="results/tables/deseq2/{comparison}.tsv"
+    params:
+        alpha=DE["alpha"],
+        group_column=DE["group_column"],
+        numerator=lambda wc: CONTRASTS[wc.comparison]["numerator"],
+        denominator=lambda wc: CONTRASTS[wc.comparison]["denominator"]
+    script:
+        "script/deseq2.R"
+
+
+rule de_summary:
+    input:
+        dds=rules.prepare_dds.output.dds,
+        res=rules.deseq2.output.results
+    output:
+        deg="results/tables/de_summary/{comparison}/deg.tsv",
+        volcano="results/figures/de_summary/{comparison}/volcano.png",
+        heatmap="results/figures/de_summary/{comparison}/deg_heatmap.png"
+    params:
+        alpha=DE["alpha"],
+        min_fold_change=DE["min_fold_change"],
+        group_column=DE["group_column"],
+        numerator=lambda wc: CONTRASTS[wc.comparison]["numerator"],
+        denominator=lambda wc: CONTRASTS[wc.comparison]["denominator"]
+    script:
+        "script/de_summary.R"
+
+
+rule enrichment:
+    input:
+        res=rules.deseq2.output.results,
+        deg=rules.de_summary.output.deg,
+        term2gene=[TERM2GENE] if TERM2GENE else []
+    output:
+        **ENRICH_OUTPUT
+    params:
+        pathway_fdr=ENRICH["pathway_fdr"]
+    script:
+        "script/enrichment.R"
+
+
+# 每个具名输入向量的顺序均与 contrasts 在配置文件中的顺序一致。
+rule report:
+    input:
+        samples=rules.validate_inputs.output.samples,
+        pca=rules.sample_qc.output.pca,
+        correlation_heatmap=rules.sample_qc.output.correlation_heatmap,
+        de=expand(rules.deseq2.output.results, comparison=CONTRASTS),
+        deg=expand(rules.de_summary.output.deg, comparison=CONTRASTS),
+        volcano=expand(rules.de_summary.output.volcano, comparison=CONTRASTS),
+        heatmap=expand(rules.de_summary.output.heatmap, comparison=CONTRASTS),
+        **{key: expand(path, comparison=CONTRASTS) for key, path in ENRICH_OUTPUT.items()}
+    output:
+        html="results/report.html"
+    params:
+        contrasts=CONTRASTS,
+        design=DE["design"],
+        group_column=DE["group_column"],
+        alpha=DE["alpha"],
+        min_fold_change=DE["min_fold_change"],
+        pathway_fdr=ENRICH["pathway_fdr"],
+        ora_sets=ORA_SETS,
+        term2gene=TERM2GENE
+    script:
+        "script/report.R"
